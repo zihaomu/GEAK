@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from minisweagent.agents.default import AgentConfig, DefaultAgent
+from minisweagent.agents.default import AgentConfig, DefaultAgent, NonTerminatingException
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicModel
 
@@ -83,6 +83,46 @@ def test_successful_completion(model_factory):
     assert exit_status == "Submitted"
     assert submission == "Task completed successfully\n"
     assert agent.model.n_calls == 2
+
+
+def test_optimization_agent_rejects_completion_before_save_and_test(model_factory, tmp_path):
+    factory, config = model_factory
+    agent = DefaultAgent(
+        model=factory([]),
+        env=LocalEnvironment(),
+        **{
+            **config,
+            "patch_output_dir": str(tmp_path),
+            "test_command": "echo test",
+            "save_patch": True,
+        },
+    )
+
+    with pytest.raises(NonTerminatingException, match="save_and_test"):
+        agent.has_finished({"output": "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\n"})
+
+
+def test_optimization_agent_rejects_submit_tool_before_save_and_test(model_factory, tmp_path):
+    factory, config = model_factory
+    agent = DefaultAgent(
+        model=factory([]),
+        env=LocalEnvironment(),
+        **{
+            **config,
+            "patch_output_dir": str(tmp_path),
+            "test_command": "echo test",
+            "save_patch": True,
+        },
+    )
+
+    with pytest.raises(NonTerminatingException, match="save_and_test"):
+        agent.parse_action({
+            "content": "",
+            "tools": {
+                "id": "call_1",
+                "function": {"name": "submit", "arguments": {"summary": "done"}},
+            },
+        })
 
 
 def test_step_limit_enforcement(model_factory):

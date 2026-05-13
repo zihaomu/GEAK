@@ -143,7 +143,7 @@ class DefaultAgent:
             self.toolruntime.disable_tools(self.config.disabled_tools)
         # Always wrap RAG MCP tools with postprocessor filter
         try:
-            self.toolruntime.wrap_rag_tools_with_postprocessor(api_key=self.model.config.api_key)
+            self.toolruntime.wrap_rag_tools_with_postprocessor(api_key=getattr(self.model.config, "api_key", None))
         except Exception as e:
             logger.warning("Failed to wrap RAG tools with RAG postprocessor: %s", e)
         # Propagate agent's env vars (HIP_VISIBLE_DEVICES etc.) to tools
@@ -469,6 +469,7 @@ class DefaultAgent:
                 result = self.toolruntime.dispatch(tool_call=response["tools"]["function"])
                 self.has_finished(result)
             except ToolSubmitted as e:
+                self._ensure_ready_to_submit()
                 raise Submitted(str(e))
             # Handle tool results (sync state, etc.)
             tool_action = self._handle_tool_result(result)
@@ -630,7 +631,23 @@ class DefaultAgent:
         # Legacy: Check for bash echo commands
         lines = output.get("output", "").lstrip().splitlines(keepends=True)
         if lines and lines[0].strip() in ["MINI_SWE_AGENT_FINAL_OUTPUT", "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"]:
+            self._ensure_ready_to_submit()
             raise Submitted("".join(lines[1:]))
+
+    def _ensure_ready_to_submit(self) -> None:
+        """Reject empty optimization submissions before any patch was tested."""
+        if not (self.config.patch_output_dir and self.config.test_command and self.config.save_patch):
+            return
+        patch_counter = self.patch_counter
+        ctx = getattr(self, "_save_and_test_context", None)
+        if ctx is not None:
+            patch_counter = max(patch_counter, ctx.patch_counter)
+        if patch_counter > 0:
+            return
+        raise NonTerminatingException(
+            "You cannot finish this optimization task yet: edit the target code and call the "
+            "`save_and_test` tool at least once so GEAK has a patch and benchmark result to evaluate."
+        )
 
     # ============ Logging ============
 
